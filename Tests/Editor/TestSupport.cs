@@ -14,6 +14,7 @@ namespace Strybok.Tests
         private readonly List<StrybokHttpRequest> _resolves = new List<StrybokHttpRequest>();
         private readonly List<StrybokHttpRequest> _eventRequests = new List<StrybokHttpRequest>();
         private readonly List<CancellationToken> _tokens = new List<CancellationToken>();
+        private readonly List<StrybokHttpRequest> _creates = new List<StrybokHttpRequest>();
 
         public FakeApi(Func<StrybokHttpRequest, Task<StrybokHttpResponse>> onResolve = null)
         {
@@ -23,6 +24,15 @@ namespace Strybok.Tests
         public Func<StrybokHttpRequest, Task<StrybokHttpResponse>> OnResolve { get; set; }
 
         public Func<Task<StrybokHttpResponse>> OnEvent { get; set; }
+
+        /// <summary>Answers create-link calls; 201 with <see cref="T.CreatedBody"/> when null.</summary>
+        public Func<StrybokHttpRequest, Task<StrybokHttpResponse>> OnCreate { get; set; }
+
+        /// <summary>The create-link calls, in order.</summary>
+        public List<StrybokHttpRequest> Creates
+        {
+            get { lock (_gate) return new List<StrybokHttpRequest>(_creates); }
+        }
 
         public List<StrybokHttpRequest> Resolves
         {
@@ -63,6 +73,11 @@ namespace Strybok.Tests
                 lock (_gate) _eventRequests.Add(request);
                 return OnEvent != null ? OnEvent() : T.Respond(202, string.Empty);
             }
+            if (new Uri(request.Url).AbsolutePath.EndsWith("/v1/public/links", StringComparison.Ordinal))
+            {
+                lock (_gate) _creates.Add(request);
+                return OnCreate != null ? OnCreate(request) : T.Respond(201, T.CreatedBody());
+            }
             lock (_gate)
             {
                 _resolves.Add(request);
@@ -90,6 +105,20 @@ namespace Strybok.Tests
                 200,
                 "{\"linkId\":\"" + linkId + "\",\"appId\":\"app_1\",\"routePath\":\"" + route +
                 "\",\"payload\":{\"invitationId\":\"abc123\"}}");
+        }
+
+        public const string ClientKey = "pk_0123456789abcdefghijABCDEFGHIJ01";
+
+        public static string CreatedBody(string route = "/product/42")
+        {
+            return "{\"linkId\":\"link_9\",\"url\":\"https://" + Host + "/Ab3xK9\",\"slug\":\"Ab3xK9\",\"routePath\":\"" +
+                   route + "\"}";
+        }
+
+        public static Task<StrybokHttpResponse> Respond(int status, string body, string retryAfter)
+        {
+            return Task.FromResult(new StrybokHttpResponse(
+                status, body, new Dictionary<string, string> { { "retry-after", retryAfter } }));
         }
 
         /// <summary>A call that never gets an answer.</summary>

@@ -1,6 +1,6 @@
 {
   "name": "com.strybok.sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "displayName": "Strybok SDK",
   "description": "Receives iOS Universal Links and Android App Links, resolves them through the Strybok API to an in-app route and payload, and delivers each link exactly once: on cold start, from the background and in the foreground. Deferred deep linking is not supported.",

@@ -24,6 +24,12 @@ namespace Strybok
     public static class StrybokSdk
     {
         private static StrybokClient s_client;
+
+        /// <summary>Used by CreateLinkAsync before Initialize; never initialized, so it does not listen for links.</summary>
+        private static StrybokClient s_linkCreator;
+
+        /// <summary>Options from the settings asset, or null when there is none. Replaced in tests.</summary>
+        internal static Func<StrybokOptions> SettingsOptions = LoadSettingsOptions;
         private static Task s_initialization;
         private static Action<ResolvedDeepLink> s_linkHandlers;
         private static Action<StrybokException> s_errorHandlers;
@@ -116,12 +122,7 @@ namespace Strybok
                 return s_initialization;
             }
 
-            StrybokOptions effective = options.Clone();
-            if (effective.LinkSource == null) effective.LinkSource = new UnityLinkSource();
-            if (effective.HttpTransport == null) effective.HttpTransport = new UnityWebRequestTransport();
-            if (effective.Platform == StrybokPlatform.Unknown) effective.Platform = UnityLinkSource.CurrentPlatform;
-            if (effective.CallbackContext == null) effective.CallbackContext = SynchronizationContext.Current;
-            if (effective.OnHandlerException == null) effective.OnHandlerException = Debug.LogException;
+            StrybokOptions effective = WithUnityDefaults(options);
 
             Action<StrybokException> userOnError = effective.OnError;
             effective.OnError = error =>
@@ -163,6 +164,50 @@ namespace Strybok
             return RequireClient().ResolveAsync(url);
         }
 
+        /// <summary>
+        /// Asks the service for a short link to a screen of this game, for a "Share" button:
+        /// <code>
+        /// CreatedLink link = await StrybokSdk.CreateLinkAsync("/product/42", title: "Red shoes");
+        /// Share(link.Url);
+        /// </code>
+        /// Needs the publishable client key (<c>pk_…</c>): <c>ClientKey</c> in the options or
+        /// in the <see cref="StrybokSettings"/> asset. Creating links from the app must be
+        /// switched on in the dashboard, with the allowed route patterns.
+        ///
+        /// It only runs when you call it and has nothing to do with receiving links. After
+        /// <see cref="Initialize(StrybokOptions)"/> it uses that configuration; before (or
+        /// without) it, the <see cref="StrybokSettings"/> asset, which then does not need a
+        /// link host. Failures are thrown from the awaited task as
+        /// <see cref="StrybokException"/>s and never raise <see cref="LinkFailed"/>; see
+        /// <see cref="StrybokClient.CreateLinkAsync"/> for the list.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">
+        /// <see cref="Initialize(StrybokOptions)"/> was not called and there is no settings asset.
+        /// </exception>
+        public static Task<CreatedLink> CreateLinkAsync(
+            string routePath,
+            System.Collections.Generic.IReadOnlyDictionary<string, object> payload = null,
+            string title = null,
+            string description = null,
+            string imageUrl = null)
+        {
+            return LinkCreator().CreateLinkAsync(routePath, payload, title, description, imageUrl);
+        }
+
+        /// <summary>
+        /// <see cref="CreateLinkAsync"/> with the payload as JSON object text, e.g.
+        /// <c>JsonUtility.ToJson(myPayload)</c>. Null means no payload.
+        /// </summary>
+        public static Task<CreatedLink> CreateLinkWithPayloadJsonAsync(
+            string routePath,
+            string payloadJson,
+            string title = null,
+            string description = null,
+            string imageUrl = null)
+        {
+            return LinkCreator().CreateLinkWithPayloadJsonAsync(routePath, payloadJson, title, description, imageUrl);
+        }
+
         /// <summary>Whether <paramref name="url"/> is one of this app's Strybok links.</summary>
         public static bool IsStrybokUrl(string url)
         {
@@ -170,17 +215,60 @@ namespace Strybok
         }
 
         /// <summary>
-        /// Stops listening and drops queued links; nothing is delivered afterwards.
+        /// Stops listening and drops queued links; nothing is delivered afterwards, and
+        /// requests in flight (including <see cref="CreateLinkAsync"/>) are aborted.
         /// Subscriptions to <see cref="LinkReceived"/> and <see cref="LinkFailed"/> are
         /// kept for a later <see cref="Initialize(StrybokOptions)"/>.
         /// </summary>
         public static void Shutdown()
         {
             StrybokClient client = s_client;
+            StrybokClient linkCreator = s_linkCreator;
             s_client = null;
+            s_linkCreator = null;
             s_initialization = null;
             s_forwarding = false;
             if (client != null) client.Dispose();
+            if (linkCreator != null) linkCreator.Dispose();
+        }
+
+        /// <summary>The Unity link source, transport, platform and main-thread context where the options have none.</summary>
+        private static StrybokOptions WithUnityDefaults(StrybokOptions options)
+        {
+            StrybokOptions effective = options.Clone();
+            if (effective.LinkSource == null) effective.LinkSource = new UnityLinkSource();
+            if (effective.HttpTransport == null) effective.HttpTransport = new UnityWebRequestTransport();
+            if (effective.Platform == StrybokPlatform.Unknown) effective.Platform = UnityLinkSource.CurrentPlatform;
+            if (effective.CallbackContext == null) effective.CallbackContext = SynchronizationContext.Current;
+            if (effective.OnHandlerException == null) effective.OnHandlerException = Debug.LogException;
+            return effective;
+        }
+
+        /// <summary>
+        /// The initialized client, or one made from the settings asset that never starts
+        /// listening: creating a link must not depend on, or trigger, link handling.
+        /// </summary>
+        private static StrybokClient LinkCreator()
+        {
+            if (s_client != null) return s_client;
+            if (s_linkCreator != null) return s_linkCreator;
+
+            Func<StrybokOptions> load = SettingsOptions;
+            StrybokOptions options = load != null ? load() : null;
+            if (options == null)
+            {
+                throw new InvalidOperationException(
+                    "Call StrybokSdk.Initialize(...) first, or create the StrybokSettings asset with " +
+                    "Tools > Strybok > Settings.");
+            }
+            s_linkCreator = new StrybokClient(WithUnityDefaults(options), true);
+            return s_linkCreator;
+        }
+
+        private static StrybokOptions LoadSettingsOptions()
+        {
+            StrybokSettings settings = StrybokSettings.Load();
+            return settings == null ? null : settings.ToOptions();
         }
 
         private static void ForwardLink(ResolvedDeepLink link)
@@ -216,6 +304,7 @@ namespace Strybok
             Shutdown();
             s_linkHandlers = null;
             s_errorHandlers = null;
+            SettingsOptions = LoadSettingsOptions;
         }
     }
 }

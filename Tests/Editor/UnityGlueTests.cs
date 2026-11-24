@@ -153,6 +153,99 @@ namespace Strybok.Tests
         }
 
         [Test]
+        public void Sdk_CreatesLinksWithTheInitializedClient()
+        {
+            var api = new FakeApi();
+            var source = new FakeLinkSource();
+            StrybokOptions options = Options(api, source);
+            options.ClientKey = T.ClientKey;
+            var failures = new List<StrybokException>();
+            Action<StrybokException> handler = failures.Add;
+            StrybokSdk.LinkFailed += handler;
+            try
+            {
+                StrybokSdk.Initialize(options);
+
+                CreatedLink link = StrybokSdk.CreateLinkAsync("/product/42", title: "Red shoes").Result;
+                Assert.That(link.Url, Is.EqualTo("https://" + T.Host + "/Ab3xK9"));
+                Assert.That(api.Creates, Has.Count.EqualTo(1));
+                Assert.That(api.Creates[0].Body, Is.EqualTo("{\"routePath\":\"/product/42\",\"title\":\"Red shoes\"}"));
+
+                link = StrybokSdk.CreateLinkWithPayloadJsonAsync("/product/42", "{\"productId\":42}").Result;
+                Assert.That(link.Slug, Is.EqualTo("Ab3xK9"));
+                Assert.That(api.Creates[1].Body, Is.EqualTo("{\"routePath\":\"/product/42\",\"payload\":{\"productId\":42}}"));
+
+                // Failures come back through the task, never through LinkFailed (and are not logged).
+                api.OnCreate = _ => T.Respond(403, string.Empty);
+                var failed = StrybokSdk.CreateLinkAsync("/admin");
+                Assert.That(failed.IsFaulted, Is.True);
+                Assert.That(failed.Exception.InnerException, Is.InstanceOf<RouteNotAllowedException>());
+                Assert.That(failures, Is.Empty);
+                Assert.That(api.Resolves, Is.Empty);
+            }
+            finally
+            {
+                StrybokSdk.LinkFailed -= handler;
+            }
+        }
+
+        [Test]
+        public void Sdk_CreatesLinksBeforeInitializeFromTheSettingsWithoutListening()
+        {
+            var api = new FakeApi();
+            var source = new FakeLinkSource(T.Invite);
+            int loaded = 0;
+            Func<StrybokOptions> original = StrybokSdk.SettingsOptions;
+            StrybokSdk.SettingsOptions = () =>
+            {
+                loaded++;
+                // Like a settings asset of a game that only shares links: no link host.
+                return new StrybokOptions
+                {
+                    ApiBaseUrl = T.Api,
+                    ClientKey = T.ClientKey,
+                    LinkSource = source,
+                    HttpTransport = api,
+                    MaxRetries = 0,
+                };
+            };
+            try
+            {
+                CreatedLink link = StrybokSdk.CreateLinkAsync("/product/42").Result;
+                Assert.That(link.LinkId, Is.EqualTo("link_9"));
+                StrybokSdk.CreateLinkAsync("/product/43").Wait();
+
+                Assert.That(loaded, Is.EqualTo(1), "the settings are read once");
+                Assert.That(api.Creates, Has.Count.EqualTo(2));
+                Assert.That(StrybokSdk.IsInitialized, Is.False, "creating a link does not initialize the SDK");
+                Assert.That(source.HasListener, Is.False);
+                Assert.That(api.Resolves, Is.Empty, "the launch link is left for Initialize");
+
+                // Once initialized, that configuration is used.
+                var initializedApi = new FakeApi();
+                StrybokOptions options = Options(initializedApi, new FakeLinkSource());
+                options.ClientKey = T.ClientKey;
+                StrybokSdk.Initialize(options);
+                StrybokSdk.CreateLinkAsync("/product/44").Wait();
+                Assert.That(initializedApi.Creates, Has.Count.EqualTo(1));
+                Assert.That(api.Creates, Has.Count.EqualTo(2));
+
+                // No Initialize and no settings asset.
+                StrybokSdk.Shutdown();
+                StrybokSdk.SettingsOptions = () => null;
+                Assert.That(() => { StrybokSdk.CreateLinkAsync("/product/42"); }, Throws.InstanceOf<InvalidOperationException>());
+                Assert.That(
+                    () => { StrybokSdk.CreateLinkWithPayloadJsonAsync("/product/42", "{}"); },
+                    Throws.InstanceOf<InvalidOperationException>());
+            }
+            finally
+            {
+                StrybokSdk.Shutdown();
+                StrybokSdk.SettingsOptions = original;
+            }
+        }
+
+        [Test]
         public void Sdk_RejectsInvalidOptions()
         {
             Assert.That(() => { StrybokSdk.Initialize((StrybokOptions)null); }, Throws.InstanceOf<ArgumentNullException>());
@@ -171,11 +264,14 @@ namespace Strybok.Tests
                 Assert.That(settings.ApiBaseUrl, Is.EqualTo("https://api.strybok.com"));
                 Assert.That(settings.AddIosAssociatedDomains, Is.True);
                 Assert.That(settings.AddAndroidIntentFilter, Is.True);
+                Assert.That(settings.ClientKey, Is.EqualTo(string.Empty));
+                Assert.That(settings.ToOptions().ClientKey, Is.Null, "no key until one is entered");
 
                 settings.LinkHosts = new[] { " My-App.Strybok.Link ", "", null, "my-app.strybok.link", "other.example.com" };
                 settings.TimeoutSeconds = 3f;
                 settings.MaxRetries = 1;
                 settings.ReportAppOpens = false;
+                settings.ClientKey = " pk_abc ";
 
                 Assert.That(settings.GetNormalizedHosts(), Is.EqualTo(new[] { "my-app.strybok.link", "other.example.com" }));
                 StrybokOptions options = settings.ToOptions();
@@ -184,6 +280,7 @@ namespace Strybok.Tests
                 Assert.That(options.Timeout, Is.EqualTo(TimeSpan.FromSeconds(3)));
                 Assert.That(options.MaxRetries, Is.EqualTo(1));
                 Assert.That(options.ReportAppOpens, Is.False);
+                Assert.That(options.ClientKey, Is.EqualTo("pk_abc"));
             }
             finally
             {

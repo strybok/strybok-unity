@@ -27,7 +27,7 @@ namespace Strybok
         /// </summary>
         public ICollection<string> AllowedHosts { get; set; } = new List<string>();
 
-        /// <summary>Time allowed for a single resolve attempt. Default 5 s.</summary>
+        /// <summary>Time allowed for a single resolve or create-link attempt. Default 5 s.</summary>
         public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(5);
 
         /// <summary>
@@ -53,6 +53,14 @@ namespace Strybok
         /// Links that are simply not ours are ignored without an error.
         /// </summary>
         public Action<StrybokException> OnError { get; set; }
+
+        /// <summary>
+        /// Publishable client key of the application (<c>pk_…</c>) from the dashboard
+        /// ("Links from the app"). Only needed for <see cref="StrybokClient.CreateLinkAsync"/>.
+        /// It is safe to ship inside the app: it can only create links for the route patterns
+        /// listed in the dashboard. Never put a secret API key (<c>lb_…</c>) here.
+        /// </summary>
+        public string ClientKey { get; set; }
 
         /// <summary>
         /// Receives exceptions thrown by your own <c>LinkReceived</c> / <c>OnError</c>

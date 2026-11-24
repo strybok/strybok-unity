@@ -54,7 +54,8 @@ namespace Strybok.Tests
             Assert.That(options.DedupeWindow, Is.EqualTo(TimeSpan.FromSeconds(2)));
             Assert.That(options.ReportAppOpens, Is.True);
             Assert.That(options.OnError, Is.Null);
-            Assert.That(StrybokClient.SdkVersion, Is.EqualTo("0.1.0"));
+            Assert.That(options.ClientKey, Is.Null);
+            Assert.That(StrybokClient.SdkVersion, Is.EqualTo("0.2.0"));
         }
 
         [Test]
@@ -823,7 +824,7 @@ namespace Strybok.Tests
                 Assert.That(body["type"], Is.EqualTo("app_open"));
                 Assert.That(body["linkId"], Is.EqualTo("link_1"));
                 Assert.That(body["platform"], Is.EqualTo("unknown"));
-                Assert.That(body["sdkVersion"], Is.EqualTo("0.1.0"));
+                Assert.That(body["sdkVersion"], Is.EqualTo("0.2.0"));
                 Assert.That(((string)body["sdkVersion"]).Length, Is.LessThanOrEqualTo(32));
                 Assert.That(
                     Regex.IsMatch((string)body["eventId"], "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"),

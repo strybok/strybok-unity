@@ -133,6 +133,24 @@ namespace Strybok.Tests
                 {
                     Thread.Sleep(3000);
                 }
+                else if (path == "/limited")
+                {
+                    status = 429;
+                    answer = "{\"error\":{\"code\":\"RATE_LIMITED\"}}";
+                    context.Response.AddHeader("Retry-After", "60");
+                }
+                else if (path == "/api/v1/public/links")
+                {
+                    lock (_requests)
+                    {
+                        _requests.Add(
+                            "LINKS key=" + request.Headers["X-Strybok-Key"] +
+                            " authorization=" + request.Headers["Authorization"]);
+                    }
+                    status = 201;
+                    answer = "{\"linkId\":\"link_9\",\"url\":\"https://my-app.strybok.link/Ab3xK9\"," +
+                             "\"slug\":\"Ab3xK9\",\"routePath\":\"/product/42\"}";
+                }
 
                 byte[] bytes = Encoding.UTF8.GetBytes(answer);
                 context.Response.StatusCode = status;
@@ -221,6 +239,88 @@ namespace Strybok.Tests
         }
 
         [UnityTest]
+        public IEnumerator ResponseHeaders_AreReported()
+        {
+            var transport = new UnityWebRequestTransport();
+            Task<StrybokHttpResponse> task = transport.SendAsync(Get(_baseUrl + "/limited"), CancellationToken.None);
+            yield return Await(task);
+
+            Assert.That(task.IsFaulted, Is.False, task.Exception == null ? null : task.Exception.ToString());
+            Assert.That(task.Result.StatusCode, Is.EqualTo(429));
+            Assert.That(task.Result.GetHeader("Retry-After"), Is.EqualTo("60"));
+            Assert.That(task.Result.GetHeader("X-Not-There"), Is.Null);
+        }
+
+        [UnityTest]
+        public IEnumerator Client_CreatesALinkThroughTheRealTransport()
+        {
+            const string key = "pk_0123456789abcdefghijABCDEFGHIJ01";
+            var client = new StrybokClient(new StrybokOptions
+            {
+                ApiBaseUrl = _baseUrl + "/api",
+                AllowedHosts = { "my-app.strybok.link" },
+                LinkSource = new Strybok.Testing.FakeLinkSource(),
+                HttpTransport = new UnityWebRequestTransport(),
+                CallbackContext = SynchronizationContext.Current,
+                ClientKey = key,
+            });
+            try
+            {
+                Task<CreatedLink> task = client.CreateLinkAsync(
+                    "/product/42", new Dictionary<string, object> { { "name", "é" } }, "Red shoes");
+                yield return Await(task.ContinueWith(_ => { }));
+
+                Assert.That(task.IsFaulted, Is.False, task.Exception == null ? null : task.Exception.ToString());
+                Assert.That(task.Result.Url, Is.EqualTo("https://my-app.strybok.link/Ab3xK9"));
+                Assert.That(task.Result.LinkId, Is.EqualTo("link_9"));
+                Assert.That(
+                    Requests,
+                    Has.Member(
+                        "POST /api/v1/public/links accept=application/json type=application/json " +
+                        "body={\"routePath\":\"/product/42\",\"payload\":{\"name\":\"é\"},\"title\":\"Red shoes\"}"));
+                Assert.That(Requests, Has.Member("LINKS key=" + key + " authorization="));
+
+                Task<CreatedLink> limited = new StrybokClient(new StrybokOptions
+                {
+                    ApiBaseUrl = _baseUrl + "/limited-api",
+                    AllowedHosts = { "my-app.strybok.link" },
+                    LinkSource = new Strybok.Testing.FakeLinkSource(),
+                    HttpTransport = new LimitedTransport(new UnityWebRequestTransport(), _baseUrl + "/limited"),
+                    ClientKey = key,
+                }).CreateLinkAsync("/product/42");
+                yield return Await(limited.ContinueWith(_ => { }));
+                Assert.That(limited.IsFaulted, Is.True);
+                var rateLimited = limited.Exception.InnerException as StrybokRateLimitedException;
+                Assert.That(rateLimited, Is.Not.Null, limited.Exception.InnerException.ToString());
+                Assert.That(rateLimited.RetryAfter, Is.EqualTo(TimeSpan.FromSeconds(60)));
+            }
+            finally
+            {
+                client.Dispose();
+            }
+        }
+
+        /// <summary>Sends every request to one URL of the test server.</summary>
+        private sealed class LimitedTransport : IHttpTransport
+        {
+            private readonly IHttpTransport _inner;
+            private readonly string _url;
+
+            public LimitedTransport(IHttpTransport inner, string url)
+            {
+                _inner = inner;
+                _url = url;
+            }
+
+            public Task<StrybokHttpResponse> SendAsync(StrybokHttpRequest request, CancellationToken cancellationToken)
+            {
+                return _inner.SendAsync(
+                    new StrybokHttpRequest(request.Method, _url, request.Headers, request.Body, request.Timeout),
+                    cancellationToken);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator ConnectionFailure_FaultsTheTask()
         {
             var transport = new UnityWebRequestTransport();
@@ -294,7 +394,7 @@ namespace Strybok.Tests
                 }
                 Assert.That(eventRequest, Is.Not.Null, "app_open event reached the server");
                 Assert.That(eventRequest, Does.Contain("type=application/json"));
-                Assert.That(eventRequest, Does.Contain("\"linkId\":\"link_1\",\"type\":\"app_open\",\"platform\":\"android\",\"sdkVersion\":\"0.1.0\"}"));
+                Assert.That(eventRequest, Does.Contain("\"linkId\":\"link_1\",\"type\":\"app_open\",\"platform\":\"android\",\"sdkVersion\":\"0.2.0\"}"));
                 Assert.That(
                     Requests,
                     Has.Member("GET /api/v1/public/resolve?url=https%3A%2F%2Fmy-app.strybok.link%2Finvite777 accept=application/json type= body="));

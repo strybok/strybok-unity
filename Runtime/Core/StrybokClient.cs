@@ -11,6 +11,7 @@ namespace Strybok
     /// <summary>
     /// Core of the SDK, free of any Unity dependency: decides which URLs are ours,
     /// resolves them through the Strybok API and delivers every link exactly once.
+    /// It can also create links to share (<see cref="CreateLinkAsync"/>).
     ///
     /// In a Unity project you normally use <c>StrybokSdk</c>, which creates a client
     /// with the Unity link source and transport. Use this class directly for custom
@@ -21,7 +22,7 @@ namespace Strybok
     public sealed class StrybokClient : IDisposable
     {
         /// <summary>Version reported with analytics events.</summary>
-        public const string SdkVersion = "0.1.0";
+        public const string SdkVersion = "0.2.0";
 
         // scheme "https", host without user info, optional port, exactly one slug
         // segment, then an optional query and/or fragment which are ignored.
@@ -35,8 +36,12 @@ namespace Strybok
         private static readonly IReadOnlyDictionary<string, string> EventHeaders =
             new Dictionary<string, string> { { "Content-Type", "application/json" } };
 
+        private const int MaxRoutePathLength = 512;
+
         private readonly object _gate = new object();
         private readonly string _apiBase;
+        private readonly string _clientKey;
+        private readonly IReadOnlyDictionary<string, string> _createLinkHeaders;
         private readonly HashSet<string> _allowedHosts;
         private readonly TimeSpan _timeout;
         private readonly int _maxRetries;
@@ -64,9 +69,29 @@ namespace Strybok
         private volatile bool _disposed;
 
         public StrybokClient(StrybokOptions options)
+            : this(options, false)
+        {
+        }
+
+        /// <summary>
+        /// <paramref name="createLinksOnly"/>: a client that is only used for
+        /// <see cref="CreateLinkAsync"/> does not need <c>AllowedHosts</c>.
+        /// </summary>
+        internal StrybokClient(StrybokOptions options, bool createLinksOnly)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
             _apiBase = NormalizeApiBaseUrl(options.ApiBaseUrl);
+            _clientKey = NormalizeClientKey(options.ClientKey);
+            if (_clientKey != null)
+            {
+                // Not "Authorization": the key is publishable and must never be taken for a bearer secret.
+                _createLinkHeaders = new Dictionary<string, string>
+                {
+                    { "Content-Type", "application/json" },
+                    { "Accept", "application/json" },
+                    { "X-Strybok-Key", _clientKey },
+                };
+            }
 
             _allowedHosts = new HashSet<string>(StringComparer.Ordinal);
             if (options.AllowedHosts != null)
@@ -77,7 +102,7 @@ namespace Strybok
                     if (normalized.Length > 0) _allowedHosts.Add(normalized);
                 }
             }
-            if (_allowedHosts.Count == 0)
+            if (_allowedHosts.Count == 0 && !createLinksOnly)
             {
                 throw new ArgumentException("AllowedHosts must contain at least one hostname", nameof(options));
             }
@@ -270,6 +295,69 @@ namespace Strybok
         }
 
         /// <summary>
+        /// Asks the service for a short link to a screen of this app, for a "Share" button.
+        /// Hand <see cref="CreatedLink.Url"/> to the share sheet.
+        ///
+        /// Needs <see cref="StrybokOptions.ClientKey"/>, the publishable key (<c>pk_…</c>) from
+        /// the dashboard, where creating links from the app must be switched on and the allowed
+        /// route patterns listed. It only runs when you call it: it works before and without
+        /// <see cref="InitializeAsync"/>, never raises <see cref="LinkReceived"/> and never
+        /// reports to <c>OnError</c>.
+        ///
+        /// Fails with a <see cref="StrybokException"/>:
+        /// <see cref="StrybokUnauthorizedException"/> (no key configured: no network call; or the
+        /// key was refused), <see cref="StrybokValidationException"/> (bad route: no network
+        /// call; or rejected by the service), <see cref="RouteNotAllowedException"/>,
+        /// <see cref="StrybokRateLimitedException"/>, and
+        /// <see cref="StrybokNetworkException"/> / <see cref="StrybokTimeoutException"/> /
+        /// <see cref="StrybokServerException"/> after the configured retries. The last four are
+        /// temporary: let the user try again later. Errors never contain the client key or the
+        /// payload. Fails with <see cref="ObjectDisposedException"/> after <see cref="Dispose"/>.
+        ///
+        /// Asking again for the same content returns the same link, so repeated taps on "Share"
+        /// do not pile up links. Do not put personal data in the route or the payload: whoever
+        /// receives the link can read them.
+        /// </summary>
+        /// <param name="routePath">In-app route the link opens: starts with one <c>/</c>, at most 512 characters.</param>
+        /// <param name="payload">
+        /// Optional JSON object delivered with the link. Values may be <c>string</c>, <c>bool</c>,
+        /// numbers, <c>null</c>, <c>Dictionary&lt;string, object&gt;</c> and lists of these, as
+        /// written by <see cref="StrybokJson.Serialize"/>.
+        /// </param>
+        /// <param name="title">Optional title of the link preview.</param>
+        /// <param name="description">Optional description of the link preview.</param>
+        /// <param name="imageUrl">Optional image of the link preview; a public <c>https</c> URL.</param>
+        public Task<CreatedLink> CreateLinkAsync(
+            string routePath,
+            IReadOnlyDictionary<string, object> payload = null,
+            string title = null,
+            string description = null,
+            string imageUrl = null)
+        {
+            Func<string> payloadJson = null;
+            if (payload != null) payloadJson = () => SerializePayload(payload);
+            return CreateLinkCoreAsync(routePath, payloadJson, title, description, imageUrl);
+        }
+
+        /// <summary>
+        /// Same as <see cref="CreateLinkAsync"/> with the payload given as JSON text, e.g. from
+        /// <c>JsonUtility.ToJson(myPayload)</c>. The text must be a JSON object; an array, a
+        /// plain value or broken JSON fails with <see cref="StrybokValidationException"/> before
+        /// any network call. Null means no payload.
+        /// </summary>
+        public Task<CreatedLink> CreateLinkWithPayloadJsonAsync(
+            string routePath,
+            string payloadJson,
+            string title = null,
+            string description = null,
+            string imageUrl = null)
+        {
+            Func<string> payload = null;
+            if (payloadJson != null) payload = () => CheckPayloadJson(payloadJson);
+            return CreateLinkCoreAsync(routePath, payload, title, description, imageUrl);
+        }
+
+        /// <summary>
         /// Stops listening, aborts requests in flight and drops queued links. Nothing is
         /// delivered afterwards. The instance cannot be reused. Safe to call twice.
         /// </summary>
@@ -436,6 +524,225 @@ namespace Strybok
         {
             object value;
             return map.TryGetValue(key, out value) ? value as string : null;
+        }
+
+        // ---------------------------------------------------------------------
+        // Creating links
+        // ---------------------------------------------------------------------
+
+        /// <param name="payloadJson">
+        /// Null for no payload; otherwise returns the payload as JSON object text or throws
+        /// <see cref="StrybokValidationException"/>. Called after the key and the route were checked.
+        /// </param>
+        private async Task<CreatedLink> CreateLinkCoreAsync(
+            string routePath,
+            Func<string> payloadJson,
+            string title,
+            string description,
+            string imageUrl)
+        {
+            ThrowIfDisposed();
+
+            // The checks of the contract, in its order, before any network call.
+            if (_clientKey == null)
+            {
+                throw new StrybokUnauthorizedException("No client key is configured (StrybokOptions.ClientKey)");
+            }
+            if (routePath == null || !routePath.StartsWith("/", StringComparison.Ordinal))
+            {
+                throw new StrybokValidationException("routePath must start with \"/\"");
+            }
+            if (routePath.StartsWith("//", StringComparison.Ordinal))
+            {
+                throw new StrybokValidationException("routePath must not start with \"//\"");
+            }
+            if (routePath.Length > MaxRoutePathLength)
+            {
+                throw new StrybokValidationException("routePath must be at most 512 characters");
+            }
+
+            // Built once: every retry sends exactly the same body. Arguments that were not
+            // given are left out (the service treats null like "omitted", but we never send it).
+            var body = new StringBuilder(256);
+            body.Append("{\"routePath\":");
+            StrybokJson.WriteString(body, routePath);
+            if (payloadJson != null)
+            {
+                body.Append(",\"payload\":").Append(payloadJson());
+            }
+            AppendOptional(body, "title", title);
+            AppendOptional(body, "description", description);
+            AppendOptional(body, "imageUrl", imageUrl);
+            body.Append('}');
+
+            var request = new StrybokHttpRequest(
+                "POST", _apiBase + "/v1/public/links", _createLinkHeaders, body.ToString(), _timeout);
+
+            // Creation is idempotent on the service (same content, same link), so a retry after
+            // a lost answer cannot make a second link.
+            StrybokException lastError = null;
+            for (int attempt = 0; attempt <= _maxRetries; attempt++)
+            {
+                if (attempt > 0) await DelayAsync(TimeSpan.FromTicks(_retryDelay.Ticks << (attempt - 1)));
+                ThrowIfDisposed();
+
+                StrybokHttpResponse response;
+                try
+                {
+                    response = await SendAsync(request);
+                }
+                catch (ObjectDisposedException) when (_disposed)
+                {
+                    throw;
+                }
+                catch (TimeoutException)
+                {
+                    lastError = new StrybokTimeoutException("The create-link request timed out", null);
+                    continue;
+                }
+                catch (Exception error)
+                {
+                    ThrowIfDisposed();
+                    lastError = new StrybokNetworkException("Network error", null, error);
+                    continue;
+                }
+
+                int status = response.StatusCode;
+                // 200: an identical link already existed. 201: a new one was made.
+                if (status == 200 || status == 201) return ParseCreateLinkResponse(status, response.Body);
+                if (status == 401)
+                {
+                    throw new StrybokUnauthorizedException(
+                        "The client key was not accepted, or creating links from the app is switched off");
+                }
+                if (status == 403) throw new RouteNotAllowedException(routePath);
+                if (status == 429) throw new StrybokRateLimitedException(ParseRetryAfter(response.GetHeader("Retry-After")));
+                if (status == 400 || status == 413 || status == 422)
+                {
+                    throw ParseValidationResponse(status, response.Body);
+                }
+                var serverError = new StrybokServerException("Unexpected status " + status, null, status);
+                if (status < 500) throw serverError; // Client errors will not improve.
+                lastError = serverError;
+            }
+            throw lastError;
+        }
+
+        private static void AppendOptional(StringBuilder body, string name, string value)
+        {
+            if (value == null) return;
+            body.Append(",\"").Append(name).Append("\":");
+            StrybokJson.WriteString(body, value);
+        }
+
+        private static string SerializePayload(IReadOnlyDictionary<string, object> payload)
+        {
+            try
+            {
+                return StrybokJson.Serialize(payload);
+            }
+            catch (Exception)
+            {
+                // Nested too deeply, or a collection that failed while being read. The
+                // cause is not attached: it could quote parts of the payload.
+                throw new StrybokValidationException("payload cannot be written as JSON");
+            }
+        }
+
+        private static string CheckPayloadJson(string payloadJson)
+        {
+            object parsed;
+            if (!StrybokJson.TryParse(payloadJson, out parsed) || !(parsed is Dictionary<string, object>))
+            {
+                throw new StrybokValidationException("payload must be a JSON object");
+            }
+            // Sent as written (numbers keep their exact text), without the byte order mark
+            // the parser tolerates.
+            return payloadJson.Trim('\uFEFF', ' ', '\t', '\n', '\r');
+        }
+
+        private static CreatedLink ParseCreateLinkResponse(int status, string body)
+        {
+            object json;
+            var map = StrybokJson.TryParse(body, out json) ? json as Dictionary<string, object> : null;
+            if (map != null)
+            {
+                string linkId = GetString(map, "linkId");
+                string slug = GetString(map, "slug");
+                string routePath = GetString(map, "routePath");
+                string url = GetString(map, "url");
+                if (linkId != null && slug != null && routePath != null && url != null &&
+                    url.StartsWith("https://", StringComparison.Ordinal))
+                {
+                    return new CreatedLink(url, slug, routePath, linkId);
+                }
+            }
+            throw new StrybokServerException("Malformed create-link response", null, status);
+        }
+
+        /// <summary>The service's <c>error.message</c> and <c>error.details.issues</c>, when the body has them.</summary>
+        private static StrybokValidationException ParseValidationResponse(int status, string body)
+        {
+            string message = null;
+            List<StrybokValidationIssue> issues = null;
+
+            object json;
+            var root = StrybokJson.TryParse(body, out json) ? json as Dictionary<string, object> : null;
+            object value;
+            var error = root != null && root.TryGetValue("error", out value) ? value as Dictionary<string, object> : null;
+            if (error != null)
+            {
+                message = GetString(error, "message");
+                var details = error.TryGetValue("details", out value) ? value as Dictionary<string, object> : null;
+                var list = details != null && details.TryGetValue("issues", out value) ? value as List<object> : null;
+                if (list != null)
+                {
+                    issues = new List<StrybokValidationIssue>();
+                    foreach (object item in list)
+                    {
+                        var issue = item as Dictionary<string, object>;
+                        if (issue == null) continue;
+                        string path = GetString(issue, "path");
+                        string text = GetString(issue, "message");
+                        if (string.IsNullOrEmpty(path) && string.IsNullOrEmpty(text)) continue;
+                        issues.Add(new StrybokValidationIssue(path, text));
+                    }
+                }
+            }
+
+            if (string.IsNullOrEmpty(message)) message = "The server rejected the link (status " + status + ")";
+            return new StrybokValidationException(message, status, issues);
+        }
+
+        /// <summary>Whole seconds from a <c>Retry-After</c> header; null for anything else (an HTTP date, for example).</summary>
+        internal static TimeSpan? ParseRetryAfter(string header)
+        {
+            if (header == null) return null;
+            string text = header.Trim();
+            if (text.Length == 0) return null;
+            long seconds = 0;
+            foreach (char c in text)
+            {
+                if (c < '0' || c > '9') return null;
+                if (seconds <= int.MaxValue) seconds = seconds * 10 + (c - '0');
+            }
+            return TimeSpan.FromSeconds(Math.Min(seconds, int.MaxValue));
+        }
+
+        /// <summary>
+        /// The key without surrounding whitespace; null when it is missing or cannot be sent as a
+        /// header value (spaces, control or non-ASCII characters): such a key is never valid.
+        /// </summary>
+        private static string NormalizeClientKey(string clientKey)
+        {
+            if (clientKey == null) return null;
+            string key = clientKey.Trim();
+            if (key.Length == 0) return null;
+            foreach (char c in key)
+            {
+                if (c <= 0x20 || c >= 0x7F) return null;
+            }
+            return key;
         }
 
         /// <summary>

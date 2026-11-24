@@ -88,7 +88,8 @@ namespace Strybok
                         {
                             // ProtocolError means "HTTP status >= 400": still an answer.
                             string text = running.downloadHandler != null ? running.downloadHandler.text : null;
-                            completion.TrySetResult(new StrybokHttpResponse((int)running.responseCode, text));
+                            completion.TrySetResult(new StrybokHttpResponse(
+                                (int)running.responseCode, text, running.GetResponseHeaders()));
                         }
                     }
                     catch (Exception error)

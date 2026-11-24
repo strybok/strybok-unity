@@ -15,6 +15,15 @@ StrybokSdk.Initialize(new StrybokOptions
 });
 ```
 
+Create a link to share (needs the application's publishable client key `pk_…`, with "Links from
+the app" switched on and route patterns listed in the dashboard — never a secret API key):
+
+```csharp
+// ClientKey = "pk_…" in the options or in the StrybokSettings asset
+CreatedLink link = await StrybokSdk.CreateLinkAsync("/product/42", title: "Red shoes");
+Share(link.Url);
+```
+
 Full guide, native setup and troubleshooting:
 [`Documentation~/unity.md`](./Documentation~/unity.md).
 Behaviour shared by all Strybok SDKs: [`Documentation~/sdk-contract.md`](./Documentation~/sdk-contract.md).
@@ -30,7 +39,7 @@ Behaviour shared by all Strybok SDKs: [`Documentation~/sdk-contract.md`](./Docum
 _Window > Package Manager > + > Add package from git URL_:
 
 ```text
-https://github.com/strybok/strybok-unity.git#0.1.0
+https://github.com/strybok/strybok-unity.git#0.2.0
 ```
 
 or, from a local clone, in `Packages/manifest.json` (path relative to the `Packages` folder):
@@ -41,12 +50,12 @@ or, from a local clone, in `Packages/manifest.json` (path relative to the `Packa
 
 ## Layout
 
-| Folder          | Contents                                                                                                |
-| --------------- | ------------------------------------------------------------------------------------------------------- |
-| `Runtime/Core`  | Plain C#, no `UnityEngine`: `StrybokClient`, options, `ResolvedDeepLink`, exceptions, interfaces, JSON. |
-| `Runtime/Unity` | `StrybokSdk`, `UnityLinkSource`, `UnityWebRequestTransport`, `StrybokSettings`, `StrybokBehaviour`.     |
-| `Editor`        | Settings menu and the iOS / Android build post-processors.                                              |
-| `Tests/Editor`  | Edit Mode tests of the SDK contract.                                                                    |
+| Folder          | Contents                                                                                                               |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `Runtime/Core`  | Plain C#, no `UnityEngine`: `StrybokClient`, options, `ResolvedDeepLink`, `CreatedLink`, exceptions, interfaces, JSON. |
+| `Runtime/Unity` | `StrybokSdk`, `UnityLinkSource`, `UnityWebRequestTransport`, `StrybokSettings`, `StrybokBehaviour`.                    |
+| `Editor`        | Settings menu and the iOS / Android build post-processors.                                                             |
+| `Tests/Editor`  | Edit Mode tests of the SDK contract.                                                                                   |
 
 ## Run the tests
 

@@ -33,6 +33,10 @@ namespace Strybok
         [Range(0, 10)]
         [SerializeField] private int maxRetries = 2;
 
+        [Header("Link creation")]
+        [Tooltip("Publishable client key (pk_...) from the dashboard, \"Links from the app\". Only needed for StrybokSdk.CreateLinkAsync. Never put a secret API key (lb_...) here.")]
+        [SerializeField] private string clientKey = "";
+
         [Header("Build")]
         [Tooltip("iOS: add 'applinks:<host>' for every link host to the Associated Domains entitlement of the generated Xcode project.")]
         [SerializeField] private bool addIosAssociatedDomains = true;
@@ -71,6 +75,13 @@ namespace Strybok
             set { maxRetries = value; }
         }
 
+        /// <summary>Publishable client key (<c>pk_…</c>); only needed for creating links. Not a secret.</summary>
+        public string ClientKey
+        {
+            get { return clientKey; }
+            set { clientKey = value ?? string.Empty; }
+        }
+
         public bool AddIosAssociatedDomains
         {
             get { return addIosAssociatedDomains; }
@@ -106,6 +117,7 @@ namespace Strybok
                 ReportAppOpens = reportAppOpens,
                 Timeout = TimeSpan.FromSeconds(Mathf.Max(0.1f, timeoutSeconds)),
                 MaxRetries = Mathf.Clamp(maxRetries, 0, 10),
+                ClientKey = string.IsNullOrWhiteSpace(clientKey) ? null : clientKey.Trim(),
             };
         }
 

@@ -1,0 +1,4 @@
+# Unity skips folders whose names end in "~", so the guides live in Documentation~ and need no
+# .meta files. Many global ignore files contain "*~", which would silently leave the folder out
+# of a commit; this rule keeps it tracked.
+!Documentation~/

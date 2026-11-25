@@ -1,9 +1,9 @@
 {
   "name": "com.strybok.sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "Apache-2.0",
   "displayName": "Strybok SDK",
-  "description": "Receives iOS Universal Links and Android App Links, resolves them through the Strybok API to an in-app route and payload, and delivers each link exactly once: on cold start, from the background and in the foreground. Deferred deep linking is not supported.",
+  "description": "Receives iOS Universal Links and Android App Links, resolves them through the Strybok API to an in-app route and payload, and delivers each link exactly once: on cold start, from the background and in the foreground. Restoring a link tapped before installation (deferred links) is optional and off by default; the game supplies the store's install referrer or the pasted link.",
   "unity": "2021.3",
   "keywords": [
     "deep link",

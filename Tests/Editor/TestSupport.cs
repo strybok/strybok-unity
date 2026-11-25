@@ -15,6 +15,7 @@ namespace Strybok.Tests
         private readonly List<StrybokHttpRequest> _eventRequests = new List<StrybokHttpRequest>();
         private readonly List<CancellationToken> _tokens = new List<CancellationToken>();
         private readonly List<StrybokHttpRequest> _creates = new List<StrybokHttpRequest>();
+        private readonly List<StrybokHttpRequest> _deferred = new List<StrybokHttpRequest>();
 
         public FakeApi(Func<StrybokHttpRequest, Task<StrybokHttpResponse>> onResolve = null)
         {
@@ -27,6 +28,15 @@ namespace Strybok.Tests
 
         /// <summary>Answers create-link calls; 201 with <see cref="T.CreatedBody"/> when null.</summary>
         public Func<StrybokHttpRequest, Task<StrybokHttpResponse>> OnCreate { get; set; }
+
+        /// <summary>Answers deferred-link calls (redeem and match); 404 when null.</summary>
+        public Func<StrybokHttpRequest, Task<StrybokHttpResponse>> OnDeferred { get; set; }
+
+        /// <summary>The redeem and match calls, in order.</summary>
+        public List<StrybokHttpRequest> Deferred
+        {
+            get { lock (_gate) return new List<StrybokHttpRequest>(_deferred); }
+        }
 
         /// <summary>The create-link calls, in order.</summary>
         public List<StrybokHttpRequest> Creates
@@ -72,6 +82,11 @@ namespace Strybok.Tests
             {
                 lock (_gate) _eventRequests.Add(request);
                 return OnEvent != null ? OnEvent() : T.Respond(202, string.Empty);
+            }
+            if (new Uri(request.Url).AbsolutePath.Contains("/v1/public/deferred-links/"))
+            {
+                lock (_gate) _deferred.Add(request);
+                return OnDeferred != null ? OnDeferred(request) : T.Respond(404, string.Empty);
             }
             if (new Uri(request.Url).AbsolutePath.EndsWith("/v1/public/links", StringComparison.Ordinal))
             {

@@ -17,17 +17,21 @@ namespace Strybok
     /// with the Unity link source and transport. Use this class directly for custom
     /// set-ups and in tests.
     ///
-    /// Deferred deep linking (restoring a link after a store install) is not supported.
+    /// Deferred links (restoring a link that was tapped before the app was installed) are
+    /// optional and off by default: see <see cref="StrybokOptions.DeferredLinks"/>. The SDK
+    /// ships no store integration and never reads the pasteboard; your game supplies the
+    /// install referrer (Android) or the pasted text (iOS).
     /// </summary>
-    public sealed class StrybokClient : IDisposable
+    public sealed partial class StrybokClient : IDisposable
     {
         /// <summary>Version reported with analytics events.</summary>
-        public const string SdkVersion = "0.2.0";
+        public const string SdkVersion = "0.3.0";
 
         // scheme "https", host without user info, optional port, exactly one slug
-        // segment, then an optional query and/or fragment which are ignored.
+        // segment, then an optional query and/or fragment (the last group). They do not
+        // decide whether a URL is ours; of the query only the campaign parameters are used.
         private static readonly Regex LinkPattern = new Regex(
-            @"\A[Hh][Tt][Tt][Pp][Ss]://([^/?#@:\s\\]+)(?::([0-9]{0,5}))?(/[A-Za-z0-9_-]{1,64})(?:[?#][^\r\n]*)?\z",
+            @"\A[Hh][Tt][Tt][Pp][Ss]://([^/?#@:\s\\]+)(?::([0-9]{0,5}))?(/[A-Za-z0-9_-]{1,64})((?:[?#][^\r\n]*)?)\z",
             RegexOptions.CultureInvariant);
 
         private static readonly IReadOnlyDictionary<string, string> ResolveHeaders =
@@ -144,6 +148,7 @@ namespace Strybok
                 case StrybokPlatform.Android: _platform = "android"; break;
                 default: _platform = "unknown"; break;
             }
+            ConfigureDeferredLinks(options);
         }
 
         /// <summary>
@@ -224,9 +229,8 @@ namespace Strybok
         /// </summary>
         public bool IsStrybokUrl(string url)
         {
-            string host;
-            string path;
-            return TryParseLink(url, out host, out path);
+            string lookup;
+            return TryParseLink(url, out lookup);
         }
 
         /// <summary>
@@ -241,15 +245,12 @@ namespace Strybok
         public async Task<ResolvedDeepLink> ResolveAsync(string url)
         {
             ThrowIfDisposed();
-            string host;
-            string path;
-            if (!TryParseLink(url, out host, out path))
+            string lookup;
+            if (!TryParseLink(url, out lookup))
             {
                 throw new UnsupportedLinkException("Not a link for this app", url);
             }
 
-            // Query and fragment are not needed for the lookup and may hold private data.
-            string lookup = "https://" + host + path;
             var request = new StrybokHttpRequest(
                 "GET",
                 _apiBase + "/v1/public/resolve?url=" + Uri.EscapeDataString(lookup),
@@ -371,6 +372,7 @@ namespace Strybok
                 _pending.Clear();
                 _initialLink = null;
                 _handlers = null;
+                _statusHandlers = null;
                 urlHandler = _urlHandler;
                 _urlHandler = null;
             }
@@ -422,6 +424,15 @@ namespace Strybok
             finally
             {
                 initialization.TrySetResult(true);
+                try
+                {
+                    // After everything else, and never awaited: the deferred-link check.
+                    OnStartCompleted();
+                }
+                catch (Exception)
+                {
+                    // Starting must never throw into the app.
+                }
             }
         }
 
@@ -429,7 +440,10 @@ namespace Strybok
         {
             try
             {
-                if (_disposed || !IsStrybokUrl(url) || IsDuplicate(url)) return;
+                if (_disposed || !IsStrybokUrl(url)) return;
+                // From here on a deferred link would be a second navigation: a normal link wins.
+                lock (_gate) _normalLinkAccepted = true;
+                if (IsDuplicate(url)) return;
 
                 ResolvedDeepLink link;
                 try
@@ -459,10 +473,15 @@ namespace Strybok
             }
         }
 
-        private bool TryParseLink(string url, out string host, out string path)
+        /// <summary>
+        /// Whether <paramref name="url"/> is ours. <paramref name="lookup"/> is then what is
+        /// sent to the API: <c>https://{lower-cased host}/{slug}</c> plus the campaign query.
+        /// The rest of the query and the fragment are never part of it, they may hold
+        /// private data.
+        /// </summary>
+        internal bool TryParseLink(string url, out string lookup)
         {
-            host = null;
-            path = null;
+            lookup = null;
             if (string.IsNullOrEmpty(url) || url.Length > 2048) return false;
             Match match = LinkPattern.Match(url);
             if (!match.Success) return false;
@@ -473,8 +492,14 @@ namespace Strybok
             string candidate = match.Groups[1].Value.ToLowerInvariant();
             if (!_allowedHosts.Contains(candidate)) return false;
 
-            host = candidate;
-            path = match.Groups[3].Value;
+            string rawQuery = string.Empty;
+            string tail = match.Groups[4].Value;
+            if (tail.Length > 0 && tail[0] == '?')
+            {
+                int fragment = tail.IndexOf('#');
+                rawQuery = fragment < 0 ? tail.Substring(1) : tail.Substring(1, fragment - 1);
+            }
+            lookup = "https://" + candidate + match.Groups[3].Value + CampaignQuery.Build(rawQuery);
             return true;
         }
 
@@ -514,10 +539,53 @@ namespace Strybok
                 {
                     object payload;
                     map.TryGetValue("payload", out payload);
-                    return new ResolvedDeepLink(url, linkId, appId, routePath, payload as Dictionary<string, object>);
+                    object campaign;
+                    map.TryGetValue("campaign", out campaign);
+                    return new ResolvedDeepLink(
+                        url, linkId, appId, routePath, payload as Dictionary<string, object>, ParseCampaign(campaign));
                 }
             }
             throw new StrybokServerException("Malformed resolve response", url, 200);
+        }
+
+        /// <summary>Keeps the five string fields; anything else, or no object at all, is not an error.</summary>
+        private static LinkCampaign ParseCampaign(object json)
+        {
+            var map = json as Dictionary<string, object>;
+            if (map == null) return LinkCampaign.Empty;
+            var campaign = new LinkCampaign(
+                GetString(map, "source"),
+                GetString(map, "medium"),
+                GetString(map, "campaign"),
+                GetString(map, "term"),
+                GetString(map, "content"));
+            return campaign.IsEmpty ? LinkCampaign.Empty : campaign;
+        }
+
+        /// <summary>
+        /// Appends <c>,"campaign":{…}</c> with what resolve returned, unchanged; nothing when
+        /// there are no values.
+        /// </summary>
+        private static void AppendCampaign(StringBuilder body, LinkCampaign campaign)
+        {
+            if (campaign == null || campaign.IsEmpty) return;
+            body.Append(",\"campaign\":{");
+            bool first = true;
+            AppendCampaignField(body, "source", campaign.Source, ref first);
+            AppendCampaignField(body, "medium", campaign.Medium, ref first);
+            AppendCampaignField(body, "campaign", campaign.Campaign, ref first);
+            AppendCampaignField(body, "term", campaign.Term, ref first);
+            AppendCampaignField(body, "content", campaign.Content, ref first);
+            body.Append('}');
+        }
+
+        private static void AppendCampaignField(StringBuilder body, string name, string value, ref bool first)
+        {
+            if (value == null) return;
+            if (!first) body.Append(',');
+            first = false;
+            body.Append('"').Append(name).Append("\":");
+            StrybokJson.WriteString(body, value);
         }
 
         private static string GetString(Dictionary<string, object> map, string key)
@@ -762,6 +830,7 @@ namespace Strybok
                 StrybokJson.WriteString(body, _platform);
                 body.Append(",\"sdkVersion\":");
                 StrybokJson.WriteString(body, SdkVersion);
+                AppendCampaign(body, link.Campaign);
                 body.Append('}');
 
                 await SendAsync(new StrybokHttpRequest(

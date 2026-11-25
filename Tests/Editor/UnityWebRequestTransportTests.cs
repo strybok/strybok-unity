@@ -394,7 +394,7 @@ namespace Strybok.Tests
                 }
                 Assert.That(eventRequest, Is.Not.Null, "app_open event reached the server");
                 Assert.That(eventRequest, Does.Contain("type=application/json"));
-                Assert.That(eventRequest, Does.Contain("\"linkId\":\"link_1\",\"type\":\"app_open\",\"platform\":\"android\",\"sdkVersion\":\"0.2.0\"}"));
+                Assert.That(eventRequest, Does.Contain("\"linkId\":\"link_1\",\"type\":\"app_open\",\"platform\":\"android\",\"sdkVersion\":\"0.3.0\"}"));
                 Assert.That(
                     Requests,
                     Has.Member("GET /api/v1/public/resolve?url=https%3A%2F%2Fmy-app.strybok.link%2Finvite777 accept=application/json type= body="));

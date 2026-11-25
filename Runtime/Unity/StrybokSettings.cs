@@ -37,6 +37,13 @@ namespace Strybok
         [Tooltip("Publishable client key (pk_...) from the dashboard, \"Links from the app\". Only needed for StrybokSdk.CreateLinkAsync. Never put a secret API key (lb_...) here.")]
         [SerializeField] private string clientKey = "";
 
+        [Header("Deferred links")]
+        [Tooltip("Restore a link that was tapped before the app was installed. Off by default. Android: your code must also supply an install referrer source in the options; iOS: your code must pass the pasted link to StrybokSdk.RedeemPastedLinkAsync. Leave it off and call StrybokSdk.EnableDeferredLinks() later if you ask for consent first.")]
+        [SerializeField] private bool deferredLinks = false;
+
+        [Tooltip("iOS only, together with Deferred Links: let the server guess the link from the network address. FORBIDDEN BY APPLE'S RULES (fingerprinting); the App Review and legal risk is yours, and a guess can be another person's link. Off by default.")]
+        [SerializeField] private bool allowProbabilisticMatching = false;
+
         [Header("Build")]
         [Tooltip("iOS: add 'applinks:<host>' for every link host to the Associated Domains entitlement of the generated Xcode project.")]
         [SerializeField] private bool addIosAssociatedDomains = true;
@@ -82,6 +89,20 @@ namespace Strybok
             set { clientKey = value ?? string.Empty; }
         }
 
+        /// <summary>See <see cref="StrybokOptions.DeferredLinks"/>. Off by default.</summary>
+        public bool DeferredLinks
+        {
+            get { return deferredLinks; }
+            set { deferredLinks = value; }
+        }
+
+        /// <summary>See <see cref="StrybokOptions.AllowProbabilisticMatching"/>: forbidden by Apple's rules. Off by default.</summary>
+        public bool AllowProbabilisticMatching
+        {
+            get { return allowProbabilisticMatching; }
+            set { allowProbabilisticMatching = value; }
+        }
+
         public bool AddIosAssociatedDomains
         {
             get { return addIosAssociatedDomains; }
@@ -118,6 +139,8 @@ namespace Strybok
                 Timeout = TimeSpan.FromSeconds(Mathf.Max(0.1f, timeoutSeconds)),
                 MaxRetries = Mathf.Clamp(maxRetries, 0, 10),
                 ClientKey = string.IsNullOrWhiteSpace(clientKey) ? null : clientKey.Trim(),
+                DeferredLinks = deferredLinks,
+                AllowProbabilisticMatching = allowProbabilisticMatching,
             };
         }
 

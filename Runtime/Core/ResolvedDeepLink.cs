@@ -6,9 +6,10 @@ namespace Strybok
     /// <summary>
     /// A link resolved by the Strybok API.
     ///
-    /// <see cref="RoutePath"/> and <see cref="Payload"/> are plain data chosen by whoever
-    /// created the link. Treat them like any other untrusted input: map them onto
-    /// scenes and screens your game already knows, never execute them.
+    /// <see cref="RoutePath"/>, <see cref="Payload"/> and <see cref="Campaign"/> are plain
+    /// data chosen by whoever created or shared the link. Treat them like any other
+    /// untrusted input: map them onto scenes and screens your game already knows, never
+    /// execute them, and use campaign values as labels only.
     /// </summary>
     public sealed class ResolvedDeepLink
     {
@@ -23,12 +24,39 @@ namespace Strybok
             string appId,
             string routePath,
             IReadOnlyDictionary<string, object> payload)
+            : this(url, linkId, appId, routePath, payload, null)
+        {
+        }
+
+        public ResolvedDeepLink(
+            string url,
+            string linkId,
+            string appId,
+            string routePath,
+            IReadOnlyDictionary<string, object> payload,
+            LinkCampaign campaign)
+            : this(url, linkId, appId, routePath, payload, campaign, false, false)
+        {
+        }
+
+        public ResolvedDeepLink(
+            string url,
+            string linkId,
+            string appId,
+            string routePath,
+            IReadOnlyDictionary<string, object> payload,
+            LinkCampaign campaign,
+            bool isDeferred,
+            bool isProbabilisticMatch)
         {
             Url = url;
             LinkId = linkId;
             AppId = appId;
             RoutePath = routePath;
             Payload = payload ?? EmptyPayload;
+            Campaign = campaign ?? LinkCampaign.Empty;
+            IsDeferred = isDeferred;
+            IsProbabilisticMatch = isProbabilisticMatch;
         }
 
         /// <summary>The full URL that opened the app, exactly as received (with query and fragment).</summary>
@@ -54,6 +82,28 @@ namespace Strybok
         /// <c>List&lt;object&gt;</c> (arrays).
         /// </summary>
         public IReadOnlyDictionary<string, object> Payload { get; }
+
+        /// <summary>
+        /// Campaign values of this open: the link's defaults, overridden by the <c>utm_*</c>
+        /// parameters of the tapped URL. Never null; <see cref="LinkCampaign.IsEmpty"/> when
+        /// there are none.
+        /// </summary>
+        public LinkCampaign Campaign { get; }
+
+        /// <summary>
+        /// True when the link was restored after an installation (a deferred link: the store's
+        /// install referrer on Android, a pasted link or a probabilistic match on iOS) instead
+        /// of opening the app directly. False for every link that arrived the normal way.
+        /// </summary>
+        public bool IsDeferred { get; }
+
+        /// <summary>
+        /// True only for a link the server guessed from the network address (iOS probabilistic
+        /// matching, <c>AllowProbabilisticMatching</c>). <b>Check it</b>: such a link may belong
+        /// to another person on the same network, so it must never by itself sign anyone in,
+        /// accept an invitation, apply a personal discount or show personal content.
+        /// </summary>
+        public bool IsProbabilisticMatch { get; }
 
         /// <summary>
         /// <see cref="Payload"/> as a JSON object string, e.g. for

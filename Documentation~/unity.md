@@ -9,7 +9,7 @@ shared [SDK contract](./sdk-contract.md).
 > HTTP transport against a local server. Generating the Xcode project and exporting the Gradle
 > project were checked for the entitlement and the manifest entry. **Not verified on a physical
 > device or simulator, and not run on Unity 2021.3 / 2022.3 yet** (see the
-> [manual test plan](./manual-test-plan.md)); not published to a registry.
+> [manual test plan](./manual-test-plan.md)). Available from OpenUPM since 2026-11-25.
 >
 > A link tapped before the app is installed is **not restored by default**. Deferred links are an
 > option that is off by default and has never run on a device; the package ships no store
@@ -37,9 +37,11 @@ _Window > Package Manager > + > Add package from git URL_:
 https://github.com/strybok/strybok-unity.git#0.3.0
 ```
 
-The part after `#` pins a tag or commit. The package is not in a registry (neither OpenUPM nor
-the Asset Store). Or clone the repository and reference the clone in `Packages/manifest.json`
-(the path is relative to the `Packages` folder):
+The part after `#` pins a tag or commit. The package is also on
+[OpenUPM](https://openupm.com/packages/com.strybok.sdk/) (not on the Asset Store): with the
+[openupm CLI](https://openupm.com/docs/getting-started-cli.html), run
+`openupm add com.strybok.sdk` in the project folder. Or clone the repository and reference the
+clone in `Packages/manifest.json` (the path is relative to the `Packages` folder):
 
 ```json
 {

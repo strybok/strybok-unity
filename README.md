@@ -1,5 +1,7 @@
 # Strybok SDK for Unity
 
+[![openupm](https://img.shields.io/npm/v/com.strybok.sdk?label=openupm&registry_uri=https://package.openupm.com)](https://openupm.com/packages/com.strybok.sdk/) [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE.md)
+
 Receives iOS Universal Links / Android App Links, resolves them through the Strybok API to an
 in-app route and payload, and delivers each link exactly once — on cold start, from the
 background and in the foreground.
@@ -62,7 +64,7 @@ Behaviour shared by all Strybok SDKs: [`Documentation~/sdk-contract.md`](./Docum
 
 - Unity 2021.3 or newer, iOS and Android, Mono and IL2CPP. No third-party dependencies.
 - Covered by Edit Mode tests (run on Unity 6000.5 and 6000.6). **Not yet verified on a physical
-  device, nor on Unity 2021.3 / 2022.3**, and not published to a registry.
+  device, nor on Unity 2021.3 / 2022.3**. Available from OpenUPM.
 - A link tapped before the app is installed is not restored by default. Deferred links are
   optional, off by default and unverified on devices; the package ships no store integration, see
   [Deferred links](#deferred-links-optional).
@@ -73,6 +75,12 @@ _Window > Package Manager > + > Add package from git URL_:
 
 ```text
 https://github.com/strybok/strybok-unity.git#0.3.0
+```
+
+or from [OpenUPM](https://openupm.com/packages/com.strybok.sdk/) with the openupm CLI:
+
+```sh
+openupm add com.strybok.sdk
 ```
 
 or, from a local clone, in `Packages/manifest.json` (path relative to the `Packages` folder):

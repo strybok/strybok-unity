@@ -21,17 +21,26 @@ namespace Strybok
     /// optional and off by default: see <see cref="StrybokOptions.DeferredLinks"/>. The SDK
     /// ships no store integration and never reads the pasteboard; your game supplies the
     /// install referrer (Android) or the pasted text (iOS).
+    ///
+    /// Links without an API call (path links and Firebase long links) are optional too: see
+    /// <see cref="StrybokOptions.ParameterLinks"/>.
     /// </summary>
     public sealed partial class StrybokClient : IDisposable
     {
         /// <summary>Version reported with analytics events.</summary>
-        public const string SdkVersion = "0.3.0";
+        public const string SdkVersion = "0.4.0";
 
         // scheme "https", host without user info, optional port, exactly one slug
         // segment, then an optional query and/or fragment (the last group). They do not
         // decide whether a URL is ours; of the query only the campaign parameters are used.
         private static readonly Regex LinkPattern = new Regex(
             @"\A[Hh][Tt][Tt][Pp][Ss]://([^/?#@:\s\\]+)(?::([0-9]{0,5}))?(/[A-Za-z0-9_-]{1,64})((?:[?#][^\r\n]*)?)\z",
+            RegexOptions.CultureInvariant);
+
+        // The same scheme, host and port rules with any path (possibly empty), for the
+        // ParameterLinks option; ParameterLinkRules decides about the path.
+        private static readonly Regex AnyPathPattern = new Regex(
+            @"\A[Hh][Tt][Tt][Pp][Ss]://([^/?#@:\s\\]+)(?::([0-9]{0,5}))?([^?#]*)((?:[?#][^\r\n]*)?)\z",
             RegexOptions.CultureInvariant);
 
         private static readonly IReadOnlyDictionary<string, string> ResolveHeaders =
@@ -47,6 +56,9 @@ namespace Strybok
         private readonly string _clientKey;
         private readonly IReadOnlyDictionary<string, string> _createLinkHeaders;
         private readonly HashSet<string> _allowedHosts;
+
+        /// <summary>The keys of <see cref="StrybokOptions.ParameterLinks"/>; null without the option.</summary>
+        private readonly string[] _payloadKeys;
         private readonly TimeSpan _timeout;
         private readonly int _maxRetries;
         private readonly TimeSpan _retryDelay;
@@ -109,6 +121,13 @@ namespace Strybok
             if (_allowedHosts.Count == 0 && !createLinksOnly)
             {
                 throw new ArgumentException("AllowedHosts must contain at least one hostname", nameof(options));
+            }
+            // Like the hosts, only a client that receives links needs the option.
+            if (options.ParameterLinks != null && !createLinksOnly)
+            {
+                string problem = ParameterLinkRules.Validate(options.ParameterLinks.PayloadKeys);
+                if (problem != null) throw new ArgumentException("ParameterLinks: " + problem, nameof(options));
+                _payloadKeys = new List<string>(options.ParameterLinks.PayloadKeys).ToArray();
             }
             if (options.Timeout <= TimeSpan.Zero || options.Timeout.TotalMilliseconds > int.MaxValue)
             {
@@ -225,7 +244,9 @@ namespace Strybok
 
         /// <summary>
         /// Whether <paramref name="url"/> is a Strybok link of this app: <c>https</c>, a
-        /// host from <c>AllowedHosts</c>, default port, no credentials and a single slug path.
+        /// host from <c>AllowedHosts</c>, default port, no credentials and a single slug path
+        /// or, with <see cref="StrybokOptions.ParameterLinks"/>, a route path or a Firebase long
+        /// link.
         /// </summary>
         public bool IsStrybokUrl(string url)
         {
@@ -475,32 +496,66 @@ namespace Strybok
 
         /// <summary>
         /// Whether <paramref name="url"/> is ours. <paramref name="lookup"/> is then what is
-        /// sent to the API: <c>https://{lower-cased host}/{slug}</c> plus the campaign query.
-        /// The rest of the query and the fragment are never part of it, they may hold
-        /// private data.
+        /// sent to the API: <c>https://{lower-cased host}/{slug}</c> plus the campaign query,
+        /// or with <see cref="StrybokOptions.ParameterLinks"/> what
+        /// <see cref="ParameterLinkRules"/> builds. The rest of the query and the fragment are
+        /// never part of it, they may hold private data.
         /// </summary>
         internal bool TryParseLink(string url, out string lookup)
+        {
+            if (_payloadKeys == null) return TryParseSlugLink(url, out lookup);
+
+            lookup = null;
+            if (string.IsNullOrEmpty(url) || url.Length > 2048) return false;
+            Match match = AnyPathPattern.Match(url);
+            if (!match.Success) return false;
+
+            string candidate;
+            if (!IsAllowedAuthority(match, out candidate)) return false;
+            string path = match.Groups[3].Value;
+            // Nothing but a port may come between the host and the path.
+            if (path.Length > 0 && path[0] != '/') return false;
+            return ParameterLinkRules.TryBuildLookup(candidate, path, RawQueryOf(match), _payloadKeys, out lookup);
+        }
+
+        /// <summary>
+        /// Whether <paramref name="url"/> is ours by the rule of 0.3.0 and earlier: a single slug
+        /// path. Used without <see cref="StrybokOptions.ParameterLinks"/>, and always for deferred
+        /// links: the server offers them only for stored links.
+        /// </summary>
+        internal bool TryParseSlugLink(string url, out string lookup)
         {
             lookup = null;
             if (string.IsNullOrEmpty(url) || url.Length > 2048) return false;
             Match match = LinkPattern.Match(url);
             if (!match.Success) return false;
 
+            string candidate;
+            if (!IsAllowedAuthority(match, out candidate)) return false;
+            lookup = "https://" + candidate + match.Groups[3].Value + CampaignQuery.Build(RawQueryOf(match));
+            return true;
+        }
+
+        /// <summary>Port 443 or none, and an allowed host; <paramref name="host"/> lower-cased.</summary>
+        private bool IsAllowedAuthority(Match match, out string host)
+        {
+            host = null;
             string port = match.Groups[2].Value;
             if (port.Length > 0 && int.Parse(port) != 443) return false;
 
             string candidate = match.Groups[1].Value.ToLowerInvariant();
             if (!_allowedHosts.Contains(candidate)) return false;
-
-            string rawQuery = string.Empty;
-            string tail = match.Groups[4].Value;
-            if (tail.Length > 0 && tail[0] == '?')
-            {
-                int fragment = tail.IndexOf('#');
-                rawQuery = fragment < 0 ? tail.Substring(1) : tail.Substring(1, fragment - 1);
-            }
-            lookup = "https://" + candidate + match.Groups[3].Value + CampaignQuery.Build(rawQuery);
+            host = candidate;
             return true;
+        }
+
+        /// <summary>The query of the tail group, without <c>?</c> and fragment; empty when there is none.</summary>
+        private static string RawQueryOf(Match match)
+        {
+            string tail = match.Groups[4].Value;
+            if (tail.Length == 0 || tail[0] != '?') return string.Empty;
+            int fragment = tail.IndexOf('#');
+            return fragment < 0 ? tail.Substring(1) : tail.Substring(1, fragment - 1);
         }
 
         /// <summary>

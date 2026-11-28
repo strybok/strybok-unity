@@ -37,6 +37,13 @@ namespace Strybok
         [Tooltip("Publishable client key (pk_...) from the dashboard, \"Links from the app\". Only needed for StrybokSdk.CreateLinkAsync. Never put a secret API key (lb_...) here.")]
         [SerializeField] private string clientKey = "";
 
+        [Header("Links without an API call")]
+        [Tooltip("Deliver path links (https://<host>/product/42?id=7) and Firebase long links (https://<host>/?link=...). Off by default: then only links with a single slug path are ours. Switch it on when the integration guide (dashboard setup screen) shows parameterLinks.")]
+        [SerializeField] private bool parameterLinks = false;
+
+        [Tooltip("parameterLinks.payloadKeys of the integration guide, in its order: the query keys sent with a path link. Up to 20 keys of A-Z a-z 0-9 _ . -; never a key that carries personal data. Only used with Parameter Links on.")]
+        [SerializeField] private string[] payloadKeys = new string[0];
+
         [Header("Deferred links")]
         [Tooltip("Restore a link that was tapped before the app was installed. Off by default. Android: your code must also supply an install referrer source in the options; iOS: your code must pass the pasted link to StrybokSdk.RedeemPastedLinkAsync. Leave it off and call StrybokSdk.EnableDeferredLinks() later if you ask for consent first.")]
         [SerializeField] private bool deferredLinks = false;
@@ -89,6 +96,23 @@ namespace Strybok
             set { clientKey = value ?? string.Empty; }
         }
 
+        /// <summary>
+        /// Whether <see cref="StrybokOptions.ParameterLinks"/> is set, with <see cref="PayloadKeys"/>.
+        /// Off by default.
+        /// </summary>
+        public bool ParameterLinks
+        {
+            get { return parameterLinks; }
+            set { parameterLinks = value; }
+        }
+
+        /// <summary>The payload keys of <see cref="StrybokOptions.ParameterLinks"/> as entered.</summary>
+        public string[] PayloadKeys
+        {
+            get { return payloadKeys; }
+            set { payloadKeys = value ?? new string[0]; }
+        }
+
         /// <summary>See <see cref="StrybokOptions.DeferredLinks"/>. Off by default.</summary>
         public bool DeferredLinks
         {
@@ -139,9 +163,26 @@ namespace Strybok
                 Timeout = TimeSpan.FromSeconds(Mathf.Max(0.1f, timeoutSeconds)),
                 MaxRetries = Mathf.Clamp(maxRetries, 0, 10),
                 ClientKey = string.IsNullOrWhiteSpace(clientKey) ? null : clientKey.Trim(),
+                ParameterLinks = parameterLinks ? new ParameterLinksOptions(GetTrimmedPayloadKeys().ToArray()) : null,
                 DeferredLinks = deferredLinks,
                 AllowProbabilisticMatching = allowProbabilisticMatching,
             };
+        }
+
+        /// <summary>
+        /// The payload keys trimmed, without blank entries, in their order. Anything else (a
+        /// duplicate, a space inside a key) is left for <see cref="StrybokClient"/> to reject.
+        /// </summary>
+        public List<string> GetTrimmedPayloadKeys()
+        {
+            var keys = new List<string>();
+            if (payloadKeys == null) return keys;
+            foreach (string entry in payloadKeys)
+            {
+                string key = entry == null ? string.Empty : entry.Trim();
+                if (key.Length > 0) keys.Add(key);
+            }
+            return keys;
         }
 
         /// <summary>Loads <c>Resources/StrybokSettings</c>; null when the asset does not exist.</summary>

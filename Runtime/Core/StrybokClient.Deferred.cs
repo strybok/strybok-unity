@@ -499,7 +499,8 @@ namespace Strybok
             {
                 string url = pastedText.Trim();
                 string lookup;
-                if (TryParseLink(url, out lookup)) clickId = DeferredLinkParsing.FindClickIdInLinkQuery(url);
+                // The copied link is a stored link's: the slug rule, with or without ParameterLinks.
+                if (TryParseSlugLink(url, out lookup)) clickId = DeferredLinkParsing.FindClickIdInLinkQuery(url);
             }
             if (clickId == null)
             {
@@ -651,8 +652,10 @@ namespace Strybok
             object deferred;
             if (!map.TryGetValue("deferred", out deferred) || !(deferred is bool) || !(bool)deferred) return null;
 
+            // The server offers deferred links only for stored links: one slug segment, with or
+            // without ParameterLinks.
             string lookup;
-            if (!TryParseLink(url, out lookup)) return null;
+            if (!TryParseSlugLink(url, out lookup)) return null;
             if (probabilistic && !string.Equals(GetString(map, "matched"), "probabilistic", StringComparison.Ordinal))
             {
                 return null;

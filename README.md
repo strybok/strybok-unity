@@ -33,6 +33,28 @@ parameters of the tapped URL. They are labels chosen by whoever shared the link:
 your analytics, never to decide anything. Details:
 [integration guide](./Documentation~/unity.md#campaign-values).
 
+## Links without an API call (optional)
+
+Path links (`https://my-app.strybok.link/product/42?id=7`) and Firebase long links
+(`https://my-app.strybok.link/?link=…`) open a route without a link made in advance, once the
+owner switched them on. Copy `parameterLinks` of the integration guide
+(`GET /v1/apps/:appId/integration`, shown on the dashboard's setup screen) into the options:
+
+```csharp
+StrybokSdk.Initialize(new StrybokOptions
+{
+    ApiBaseUrl = "https://api.strybok.com",
+    AllowedHosts = { "my-app.strybok.link" },
+    ParameterLinks = new ParameterLinksOptions("id", "lang"), // parameterLinks.payloadKeys
+});
+```
+
+or switch on **Parameter Links** and fill **Payload Keys** in the `StrybokSettings` asset. Only
+the path and the values of these keys are sent, and `link.RoutePath` / `link.Payload` are what the
+server read, never the tapped path. Off by default; without it nothing changes. New in 0.4.0,
+covered by Edit Mode tests only. Details:
+[integration guide](./Documentation~/unity.md#links-without-an-api-call-optional).
+
 ## Deferred links (optional)
 
 Restoring a link that was tapped before the game was installed is optional, **off by default and
@@ -74,7 +96,7 @@ Behaviour shared by all Strybok SDKs: [`Documentation~/sdk-contract.md`](./Docum
 _Window > Package Manager > + > Add package from git URL_:
 
 ```text
-https://github.com/strybok/strybok-unity.git#0.3.0
+https://github.com/strybok/strybok-unity.git#0.4.0
 ```
 
 or from [OpenUPM](https://openupm.com/packages/com.strybok.sdk/) with the openupm CLI:

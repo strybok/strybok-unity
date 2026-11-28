@@ -25,6 +25,7 @@ third-party dependencies and uses no reflection, so it needs no `link.xml` for c
    (_Player Settings > Other Settings > Identification_).
 2. Read its setup data: `GET /v1/apps/:appId/integration` returns the managed hostname
    (for example `my-app.strybok.link`).
+   If the application has an active [custom domain](./ios.md#custom-domain-optional), the same answer lists it in `allowedHosts`: declare it in the entitlement and the intent filter next to the managed hostname and pass both to `allowedHosts`.
 3. Do **step 1** of the [Android](./android.md) and [iOS](./ios.md) guides (team ID, bundle ID,
    package name, certificate fingerprints) so Strybok serves the association files. Step 2 of
    those guides — the manifest and the entitlement — is done by this package, see below.
@@ -34,7 +35,7 @@ third-party dependencies and uses no reflection, so it needs no `link.xml` for c
 _Window > Package Manager > + > Add package from git URL_:
 
 ```text
-https://github.com/strybok/strybok-unity.git#0.3.0
+https://github.com/strybok/strybok-unity.git#0.4.0
 ```
 
 The part after `#` pins a tag or commit. The package is also on
@@ -63,6 +64,8 @@ Open _Tools > Strybok > Settings_. This creates `Assets/Resources/StrybokSetting
 | **Timeout Seconds**            | Time for one resolve attempt (default 5).                                     |
 | **Max Retries**                | Extra attempts after a timeout, network error or 5xx (default 2).             |
 | **Client Key**                 | Publishable key `pk_…`, only for creating links to share (section 6).         |
+| **Parameter Links**            | Deliver links without an API call; off by default (section 6).                |
+| **Payload Keys**               | `parameterLinks.payloadKeys` of the integration guide, with the above on.     |
 | **Add Ios Associated Domains** | Let the build add the Associated Domains entitlement (section 4).             |
 | **Add Android Intent Filter**  | Let the build add the App Links intent filter (section 5).                    |
 
@@ -235,7 +238,8 @@ Unity's main thread. In a coroutine, wait with
 Options (`StrybokOptions`): `ApiBaseUrl`, `AllowedHosts`, `Timeout` (5 s per attempt),
 `MaxRetries` (2; only timeouts, network errors and 5xx are retried — resolving is an idempotent
 GET), `RetryDelay` (400 ms, doubling), `DedupeWindow` (2 s), `ReportAppOpens`, `OnError`,
-`OnHandlerException`, `ClientKey` (only for creating links), plus `LinkSource` / `HttpTransport` / `Platform` / `CallbackContext` for
+`OnHandlerException`, `ClientKey` (only for creating links), `ParameterLinks` (off, see
+[Links without an API call](#links-without-an-api-call-optional)), plus `LinkSource` / `HttpTransport` / `Platform` / `CallbackContext` for
 tests and custom set-ups. For [deferred links](#deferred-links-optional): `DeferredLinks` and
 `AllowProbabilisticMatching` (both off), `InstallReferrerSources`, `AndroidPackageName`,
 `IosBundleId`, `DeviceFamily`, `Locale`, `PasteboardMayContainLink` and `DeferredLinkStore`.
@@ -271,12 +275,12 @@ InvitePayload payload = JsonUtility.FromJson<InvitePayload>(link.PayloadJson);
 is the link that was being handled; `ToString()` leaves the URL out because a query can hold
 private data.
 
-| Type                                                  | Meaning                                                                                                                                              |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UnsupportedLinkException`                            | Not `https`, host not in `AllowedHosts`, or not a single-slug path. Raised before any network call. Ignored silently for links arriving from the OS. |
-| `LinkNotFoundException`                               | Unknown, disabled or expired link (404).                                                                                                             |
-| `StrybokTimeoutException` / `StrybokNetworkException` | No answer after all retries (e.g. offline). The game keeps working; the link is simply not opened.                                                   |
-| `StrybokServerException`                              | Unexpected status or malformed response; `StatusCode` tells which.                                                                                   |
+| Type                                                  | Meaning                                                                                                                                                                                                            |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `UnsupportedLinkException`                            | Not `https`, host not in `AllowedHosts`, or not a single-slug path (with `ParameterLinks`: not a route path or long link either). Raised before any network call. Ignored silently for links arriving from the OS. |
+| `LinkNotFoundException`                               | Unknown, disabled or expired link (404).                                                                                                                                                                           |
+| `StrybokTimeoutException` / `StrybokNetworkException` | No answer after all retries (e.g. offline). The game keeps working; the link is simply not opened.                                                                                                                 |
+| `StrybokServerException`                              | Unexpected status or malformed response; `StatusCode` tells which.                                                                                                                                                 |
 
 When neither `LinkFailed` nor `OnError` is set, failures are logged as warnings. An exception
 thrown by one of your own handlers is logged with `Debug.LogException` and does not stop other
@@ -334,6 +338,52 @@ raises `LinkReceived` or `LinkFailed`, and failures come back from the awaited t
 
 Errors never contain the client key or the payload. Do not put personal data in a route or
 payload: whoever receives the link can read them.
+
+### Links without an API call (optional)
+
+New in 0.4.0, **off by default and covered by Edit Mode tests only; it has not run on a device.**
+An application can let any address of its hosts open a route of the game without creating a link
+first: **path links** such as `https://my-app.strybok.link/product/42?id=7` and **Firebase long
+links** `https://my-app.strybok.link/?link=…`. The owner switches them on in the dashboard and
+chooses the allowed routes and the query keys that become the payload. Without the option the SDK
+accepts only links with a single slug path, exactly as before, and drops these URLs without a
+request.
+
+To deliver them, copy `parameterLinks` of the integration guide — `GET /v1/apps/:appId/integration`,
+shown on the dashboard's setup screen next to `allowedHosts` — into the options:
+
+```csharp
+StrybokSdk.Initialize(new StrybokOptions
+{
+    ApiBaseUrl = "https://api.strybok.com",
+    AllowedHosts = { "my-app.strybok.link" },
+    // parameterLinks.payloadKeys of the integration guide, in its order
+    ParameterLinks = new ParameterLinksOptions("id", "lang"),
+});
+```
+
+or switch on **Parameter Links** in the settings asset and enter the keys under **Payload Keys**.
+The guide gives `null` while both kinds are off; then leave the option unset.
+
+- **What is sent:** the path exactly as received, the first value of each configured key (1–256
+  characters without control characters) and the `utm_*` values; for a long link the deep link
+  rebuilt from its scheme, host and path with only its payload keys, plus `apn` and `ibi`.
+  Nothing else of the URL, and never the fragment.
+- **What you get:** `link.RoutePath` and `link.Payload` are what the server read — the route to
+  navigate to, never the tapped path. Treat both as untrusted input (section 7). The `app_open`
+  event carries the `LinkId` of the answer.
+- **Errors:** the server decides which routes, keys and web domains are allowed. With the option,
+  an address of your hosts that is no link (a typo, a bare host) reaches `LinkFailed` as a
+  `LinkNotFoundException`. An invalid option (more than 20 keys, a key twice, a key that is not
+  1–40 characters of `A–Z a–z 0–9 _ . -`, or `utm_…`, `st`, `sd`, `si`, `strybok_click`) makes
+  `Initialize` throw an `ArgumentException`.
+- **The keys are compiled into the game.** A key the owner adds later reaches players with your
+  next release; until then installed builds send the keys they know. Never configure a key that
+  carries personal data.
+- **Deferred links** keep the single-slug rule (the answer's URL and a pasted link): the server
+  restores only stored links.
+
+The exact rules are in the [SDK contract](./sdk-contract.md#links-without-an-api-call).
 
 ### Deferred links (optional)
 

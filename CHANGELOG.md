@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.4.0] - 2026-11-28
+
+- Links without an API call, optional and **off by default; covered by Edit Mode tests only,
+  never run on a device**. New option `ParameterLinks` (`ParameterLinksOptions` with
+  `PayloadKeys`; **Parameter Links** and **Payload Keys** in the `StrybokSettings` asset), the
+  value of `parameterLinks` in the integration guide. With it, path links
+  (`https://<host>/product/42?id=7`) and Firebase long links (`https://<host>/?link=…`) of the
+  link hosts are links of this game, for the automatic flow and `ResolveAsync` alike. The resolve
+  request carries the path exactly as received (never decoded or normalised), the first value of
+  each configured payload key (1–256 UTF-16 code units, no control characters, re-encoded byte by
+  byte) and the `utm_*` values; for a long link the deep link rebuilt from its scheme, host and
+  path with only its payload keys, plus `apn` and `ibi`. Nothing else of the URL is sent.
+- The delivered link has the route and payload of the server's answer, never the tapped path;
+  `app_open` carries the answer's `linkId`. With the option an address of the link hosts that is
+  no link is reported as `LinkNotFoundException`.
+- An invalid option (more than 20 keys, a key twice, a key that is not 1–40 characters of
+  `A–Z a–z 0–9 _ . -`, `utm_…` in any case, `st`, `sd`, `si`, `strybok_click`) is rejected with
+  an `ArgumentException` when the client is created, like an invalid `ApiBaseUrl`.
+- Without the option every request is byte for byte what 0.3.0 sent. Deferred links (the URL of a
+  redeem or match answer, and pasted text) keep the single-slug rule with or without it;
+  `CreateLinkAsync` is unchanged.
+- The rules are a strict parser of the URL string of their own (`System.Uri` normalises paths),
+  run against every case of the shared test vectors of the SDK contract
+  (`Tests/Editor/Fixtures/parameter-links-vectors.json`).
+- `app_open` events report `sdkVersion` `0.4.0`.
+
 ## [0.3.0] - 2026-11-24
 
 - Campaign values. `ResolvedDeepLink.Campaign` (`LinkCampaign`: `Source`, `Medium`, `Campaign`,

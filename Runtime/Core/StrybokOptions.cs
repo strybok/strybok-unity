@@ -13,6 +13,37 @@ namespace Strybok
         Android = 2,
     }
 
+    /// <summary>
+    /// The <see cref="StrybokOptions.ParameterLinks"/> option: links without an API call (path
+    /// links and Firebase long links). Copy it from <c>parameterLinks</c> of the integration guide
+    /// (<c>GET /v1/apps/:appId/integration</c>, shown on the dashboard's setup screen).
+    /// </summary>
+    public sealed class ParameterLinksOptions
+    {
+        /// <summary>No payload keys yet; add them to <see cref="PayloadKeys"/>.</summary>
+        public ParameterLinksOptions()
+        {
+        }
+
+        /// <summary>With these payload keys, in this order.</summary>
+        public ParameterLinksOptions(params string[] payloadKeys)
+        {
+            PayloadKeys = payloadKeys == null ? null : new List<string>(payloadKeys);
+        }
+
+        /// <summary>
+        /// The query keys whose values are sent with a path link and become its payload, in the
+        /// owner's order (<c>parameterLinks.payloadKeys</c> of the integration guide). At most 20
+        /// distinct keys of 1–40 characters of <c>A–Z a–z 0–9 _ . -</c>; not <c>utm_…</c> (in any
+        /// case), <c>st</c>, <c>sd</c>, <c>si</c> or <c>strybok_click</c>. An empty list is valid:
+        /// path links then carry no payload. Anything else is rejected when the client is created.
+        ///
+        /// The keys are compiled into the game: a key the owner adds in the dashboard reaches
+        /// players with the next release. Never configure a key that carries personal data.
+        /// </summary>
+        public IList<string> PayloadKeys { get; set; } = new List<string>();
+    }
+
     /// <summary>Configuration of a <see cref="StrybokClient"/>.</summary>
     public sealed class StrybokOptions
     {
@@ -62,6 +93,21 @@ namespace Strybok
         /// listed in the dashboard. Never put a secret API key (<c>lb_…</c>) here.
         /// </summary>
         public string ClientKey { get; set; }
+
+        /// <summary>
+        /// Links without an API call: deliver path links (<c>https://my-app.strybok.link/product/42?id=7</c>)
+        /// and Firebase long links (<c>https://my-app.strybok.link/?link=…</c>) and send the values of
+        /// these payload keys with them. Default: null, the option is not set, and only links with
+        /// a single slug path are ours, exactly as in 0.3.0.
+        ///
+        /// Set it to <c>parameterLinks</c> of the integration guide when the owner switched path
+        /// links or Firebase long links on. The server decides which routes, keys and web domains are
+        /// allowed, and the delivered link carries the route and payload of its answer, never the
+        /// tapped path. With the option any address of the link hosts that passes the route rules
+        /// is resolved, so <see cref="OnError"/> gets <see cref="LinkNotFoundException"/> for one
+        /// that is no link. Deferred links keep the slug rule.
+        /// </summary>
+        public ParameterLinksOptions ParameterLinks { get; set; }
 
         /// <summary>
         /// Receives exceptions thrown by your own <c>LinkReceived</c> / <c>OnError</c>
@@ -184,6 +230,13 @@ namespace Strybok
             copy.InstallReferrerSources = InstallReferrerSources == null
                 ? new List<InstallReferrerSource>()
                 : new List<InstallReferrerSource>(InstallReferrerSources);
+            if (ParameterLinks != null)
+            {
+                copy.ParameterLinks = new ParameterLinksOptions
+                {
+                    PayloadKeys = ParameterLinks.PayloadKeys == null ? null : new List<string>(ParameterLinks.PayloadKeys),
+                };
+            }
             return copy;
         }
     }
